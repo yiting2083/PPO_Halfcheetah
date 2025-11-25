@@ -23,11 +23,11 @@ def set_seed(seed):
 
 
 class WandB:
-    os.environ["WANDB_API_KEY"] = "721698f6f56dad25aaddab8144199e466d24202f"
+    os.environ["WANDB_API_KEY"] = "yourkeydontusemine"
     project_name = "ppocheetah"
 
 set_seed(45)
-os.environ["WANDB_API_KEY"] = "721698f6f56dad25aaddab8144199e466d24202f"
+os.environ["WANDB_API_KEY"] = "yourkeydont use mine"
 wandb.init(project=WandB.project_name)
 
 class Actor(nn.Module):
