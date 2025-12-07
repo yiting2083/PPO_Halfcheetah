@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
-import wandb
 import os
 import random
 import time
 from copy import deepcopy
+import matplotlib.pyplot as plt
 
 def set_seed(seed):
     random.seed(seed)
@@ -21,14 +21,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
-class WandB:
-    os.environ["WANDB_API_KEY"] = "yourkeydontusemine"
-    project_name = "ppocheetah"
-
 set_seed(45)
-os.environ["WANDB_API_KEY"] = "yourkeydont use mine"
-wandb.init(project=WandB.project_name)
 
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim):
@@ -99,6 +92,9 @@ class PPO:
         self.episode_lengths = []
         self.cumulative_samples = 0
         self.entropies = []
+        self.kl_divs = []  # Track KL divergence over episodes
+        self.policy_losses = []  # Track policy losses
+        self.value_losses = []  # Track value losses
         
     def get_action(self, state):
         mean, std = self.actor(state)
@@ -247,28 +243,122 @@ class PPO:
             self.episode_rewards.append(episode_reward)
             self.episode_lengths.append(episode_length)
             self.entropies.append(np.mean(episode_entropies))
+            self.kl_divs.append(train_info['kl_div'])
+            self.policy_losses.append(train_info['policy_loss'])
+            self.value_losses.append(train_info['value_loss'])
             
             if episode % 10 == 0:
                 avg_reward = np.mean(self.episode_rewards[-10:])
                 avg_entropy = np.mean(self.entropies[-10:])
                 
-                metrics = {
-                    "reward": avg_reward,
-                    "policy_loss": train_info['policy_loss'],
-                    "value_loss": train_info['value_loss'],
-                    "kl_div": train_info['kl_div'],
-                    "entropy": avg_entropy,
-                    "episode": episode, 
-                    "cumulative_steps": self.cumulative_samples 
-                }
-
-                wandb.log(metrics, step=self.cumulative_samples)
-                print(f"Episode {episode}, Steps: {self.cumulative_samples}, Average Reward: {avg_reward:.2f}, Entropy: {avg_entropy:.4f}")
+                print(f"Episode {episode}, Steps: {self.cumulative_samples}, Average Reward: {avg_reward:.2f}, "
+                      f"KL Div: {train_info['kl_div']:.6f}, Entropy: {avg_entropy:.4f}")
             
             if episode > 0 and episode % save_interval == 0:
                 self.save_model(episode)
         
+        # Save plots at the end of training
+        self.save_plots()
+        
         return self.episode_rewards
+
+    def save_plots(self):
+        """
+        Save training plots for reward, KL divergence, and entropy
+        """
+        os.makedirs('plots', exist_ok=True)
+        
+        fig, axes = plt.subplots(3, 1, figsize=(10, 12))
+        
+        # Plot rewards
+        axes[0].plot(self.episode_rewards, alpha=0.6, label='Episode Reward')
+        if len(self.episode_rewards) >= 10:
+            smoothed_rewards = np.convolve(self.episode_rewards, np.ones(10)/10, mode='valid')
+            axes[0].plot(range(9, len(self.episode_rewards)), smoothed_rewards, 
+                        linewidth=2, label='Smoothed (10 episodes)')
+        axes[0].set_xlabel('Episode')
+        axes[0].set_ylabel('Reward')
+        axes[0].set_title('Episode Rewards Over Training')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot KL divergence
+        axes[1].plot(self.kl_divs, alpha=0.6, label='KL Divergence')
+        if len(self.kl_divs) >= 10:
+            smoothed_kl = np.convolve(self.kl_divs, np.ones(10)/10, mode='valid')
+            axes[1].plot(range(9, len(self.kl_divs)), smoothed_kl, 
+                        linewidth=2, label='Smoothed (10 episodes)')
+        axes[1].set_xlabel('Episode')
+        axes[1].set_ylabel('KL Divergence')
+        axes[1].set_title('KL Divergence Over Training')
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+        
+        # Plot entropy
+        axes[2].plot(self.entropies, alpha=0.6, label='Entropy')
+        if len(self.entropies) >= 10:
+            smoothed_entropy = np.convolve(self.entropies, np.ones(10)/10, mode='valid')
+            axes[2].plot(range(9, len(self.entropies)), smoothed_entropy, 
+                        linewidth=2, label='Smoothed (10 episodes)')
+        axes[2].set_xlabel('Episode')
+        axes[2].set_ylabel('Entropy')
+        axes[2].set_title('Policy Entropy Over Training')
+        axes[2].legend()
+        axes[2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('plots/training_metrics.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print("\nTraining plots saved to 'plots/training_metrics.png'")
+        
+        # Also save individual plots for easier viewing
+        # Reward plot
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.episode_rewards, alpha=0.6, label='Episode Reward')
+        if len(self.episode_rewards) >= 10:
+            smoothed_rewards = np.convolve(self.episode_rewards, np.ones(10)/10, mode='valid')
+            plt.plot(range(9, len(self.episode_rewards)), smoothed_rewards, 
+                    linewidth=2, label='Smoothed (10 episodes)')
+        plt.xlabel('Episode')
+        plt.ylabel('Reward')
+        plt.title('Episode Rewards Over Training')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig('plots/rewards.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # KL divergence plot
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.kl_divs, alpha=0.6, label='KL Divergence')
+        if len(self.kl_divs) >= 10:
+            smoothed_kl = np.convolve(self.kl_divs, np.ones(10)/10, mode='valid')
+            plt.plot(range(9, len(self.kl_divs)), smoothed_kl, 
+                    linewidth=2, label='Smoothed (10 episodes)')
+        plt.xlabel('Episode')
+        plt.ylabel('KL Divergence')
+        plt.title('KL Divergence Over Training')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig('plots/kl_divergence.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Entropy plot
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.entropies, alpha=0.6, label='Entropy')
+        if len(self.entropies) >= 10:
+            smoothed_entropy = np.convolve(self.entropies, np.ones(10)/10, mode='valid')
+            plt.plot(range(9, len(self.entropies)), smoothed_entropy, 
+                    linewidth=2, label='Smoothed (10 episodes)')
+        plt.xlabel('Episode')
+        plt.ylabel('Entropy')
+        plt.title('Policy Entropy Over Training')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig('plots/entropy.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print("Individual plots saved: rewards.png, kl_divergence.png, entropy.png")
 
     def save_model(self, episode):
         """
@@ -293,8 +383,6 @@ class PPO:
         }, critic_path)
         
         print(f"Models saved at episode {episode}")
-        wandb.save(actor_path)
-        wandb.save(critic_path)
 
    
     def load_model(self, actor_path, critic_path):
@@ -319,28 +407,10 @@ class PPO:
         
 # Training
 def main():
-    wandb.init(
-        project="ppocheetah",
-        config={
-            "algorithm": "PPO",
-            "environment": "HalfCheetah-v4",
-            "max_episodes": 1000,
-            "steps_per_episode": 1000,
-            "learning_rate_actor": 3e-4,
-            "learning_rate_critic": 1e-3,
-            "clip_ratio": 0.2,
-            "gamma": 0.99,
-            "lambda": 0.95,
-            "entropy_coef": 0.01,
-            "target_kl": 0.015
-        }
-    )
-    
     env = gym.make('HalfCheetah-v4')
     set_seed(45)
     agent = PPO(env)
     rewards = agent.train(seed=45, max_episodes=1000, save_interval=50)
-    wandb.finish()
 
 if __name__ == "__main__":
     main()
